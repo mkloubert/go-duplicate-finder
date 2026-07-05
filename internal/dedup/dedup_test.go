@@ -23,9 +23,11 @@ package dedup_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mkloubert/go-duplicate-finder/internal/dedup"
+	"github.com/mkloubert/go-duplicate-finder/internal/hasher"
 	"github.com/mkloubert/go-duplicate-finder/internal/scanner"
 	"github.com/mkloubert/go-duplicate-finder/internal/ui"
 )
@@ -47,7 +49,7 @@ func TestFindGroupsDuplicates(t *testing.T) {
 	eU := write(t, filepath.Join(dir, "uniq.txt"), "world") // 5 bytes, but different content
 	eS := write(t, filepath.Join(dir, "solo.txt"), "unique-and-longer")
 
-	out, err := dedup.Find([]scanner.FileEntry{e3, e1, eU, e2, eS}, 4, ui.Noop{})
+	out, err := dedup.Find([]scanner.FileEntry{e3, e1, eU, e2, eS}, 4, hasher.BLAKE3, false, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +82,39 @@ func TestFindNoDuplicates(t *testing.T) {
 	dir := t.TempDir()
 	e1 := write(t, filepath.Join(dir, "a.txt"), "aaa")
 	e2 := write(t, filepath.Join(dir, "b.txt"), "bbbb")
-	out, err := dedup.Find([]scanner.FileEntry{e1, e2}, 2, ui.Noop{})
+	out, err := dedup.Find([]scanner.FileEntry{e1, e2}, 2, hasher.BLAKE3, false, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.Result) != 0 {
 		t.Fatalf("expected no duplicates, got %+v", out.Result)
+	}
+}
+
+func TestFindQuickModeIsApproximate(t *testing.T) {
+	dir := t.TempDir()
+	// Two same-size files with identical first/last 64 KB but different middles.
+	prefix := strings.Repeat("A", 70*1024)
+	suffix := strings.Repeat("Z", 70*1024)
+	e1 := write(t, filepath.Join(dir, "1.bin"), prefix+strings.Repeat("B", 30*1024)+suffix)
+	e2 := write(t, filepath.Join(dir, "2.bin"), prefix+strings.Repeat("C", 30*1024)+suffix)
+	files := []scanner.FileEntry{e1, e2}
+
+	// Exact mode reads the whole file and finds them different.
+	exact, err := dedup.Find(files, 2, hasher.BLAKE3, false, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exact.Result) != 0 {
+		t.Errorf("exact mode should not match different middles, got %+v", exact.Result)
+	}
+
+	// Quick mode samples only the (identical) ends and reports them as duplicates.
+	quick, err := dedup.Find(files, 2, hasher.BLAKE3, true, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quick.Result) != 1 {
+		t.Errorf("quick mode should match on sampled ends, got %d groups", len(quick.Result))
 	}
 }

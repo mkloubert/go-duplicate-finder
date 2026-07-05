@@ -36,13 +36,20 @@ type FileEntry struct {
 	Size    int64
 }
 
+// fileKey identifies a physical file by device and inode.
+type fileKey struct{ dev, ino uint64 }
+
 // Scan expands the glob patterns relative to baseDir and returns regular,
-// non-empty, deduplicated and sorted files by absolute path.
-func Scan(baseDir string, patterns []string, rep ui.Reporter) ([]FileEntry, error) {
+// non-empty, deduplicated and sorted files by absolute path. Symlinks are
+// skipped unless followSymlinks is true. Files that share the same physical
+// storage (hardlinks, or a symlink and its target when following) collapse to a
+// single entry, so they are not reported as reclaimable duplicates.
+func Scan(baseDir string, patterns []string, followSymlinks bool, rep ui.Reporter) ([]FileEntry, error) {
 	rep.ScanStarted()
 
 	fsys := os.DirFS(baseDir)
 	seen := make(map[string]struct{})
+	seenID := make(map[fileKey]struct{})
 	var entries []FileEntry
 
 	for _, pat := range patterns {
@@ -55,7 +62,13 @@ func Scan(baseDir string, patterns []string, rep ui.Reporter) ([]FileEntry, erro
 			if _, ok := seen[abs]; ok {
 				continue
 			}
-			info, err := os.Lstat(abs)
+
+			var info os.FileInfo
+			if followSymlinks {
+				info, err = os.Stat(abs) // resolves symlinks to their target
+			} else {
+				info, err = os.Lstat(abs) // a symlink stays non-regular and is skipped
+			}
 			if err != nil {
 				rep.Errorf("%s: %v", abs, err)
 				continue
@@ -65,6 +78,13 @@ func Scan(baseDir string, patterns []string, rep ui.Reporter) ([]FileEntry, erro
 			}
 			if info.Size() == 0 {
 				continue
+			}
+			if dev, ino, ok := fileID(info); ok {
+				key := fileKey{dev: dev, ino: ino}
+				if _, dup := seenID[key]; dup {
+					continue
+				}
+				seenID[key] = struct{}{}
 			}
 			seen[abs] = struct{}{}
 			entries = append(entries, FileEntry{AbsPath: abs, Size: info.Size()})

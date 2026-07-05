@@ -33,13 +33,18 @@ import (
 	"github.com/mkloubert/go-duplicate-finder/internal/ui"
 )
 
+// quickSampleBytes is how much of each file end is sampled in --quick mode.
+const quickSampleBytes = 64 * 1024
+
 type hashed struct {
 	entry scanner.FileEntry
 	hash  string
 }
 
-// Find runs the complete duplicate pipeline.
-func Find(files []scanner.FileEntry, jobs int, rep ui.Reporter) (*model.Output, error) {
+// Find runs the complete duplicate pipeline with the given hash algorithm. In
+// quick mode it sample-hashes the file ends and trusts that hash (no byte
+// comparison), which is faster but approximate.
+func Find(files []scanner.FileEntry, jobs int, algo hasher.Algorithm, quick bool, rep ui.Reporter) (*model.Output, error) {
 	out := model.New()
 
 	// 1. Group by size; only groups with >1 file are candidates.
@@ -59,7 +64,7 @@ func Find(files []scanner.FileEntry, jobs int, rep ui.Reporter) (*model.Output, 
 
 	// 2. Hash candidates in parallel.
 	rep.HashStarted(len(candidates))
-	hashes := hashCandidates(candidates, jobs, rep)
+	hashes := hashCandidates(candidates, jobs, algo, quick, rep)
 
 	// 3. Group by (size, hash).
 	type key struct {
@@ -72,15 +77,22 @@ func Find(files []scanner.FileEntry, jobs int, rep ui.Reporter) (*model.Output, 
 		byKey[k] = append(byKey[k], h.entry)
 	}
 
-	// 4+5. Cluster within each hash group by byte comparison and build output.
+	// 4+5. Cluster within each hash group and build output. Exact mode confirms
+	// with a byte comparison; quick mode trusts the sample hash.
 	for k, group := range byKey {
 		if len(group) < 2 {
 			continue
 		}
-		clusters, err := clusterByContent(group)
-		if err != nil {
-			rep.Errorf("%v", err)
-			continue
+		var clusters [][]scanner.FileEntry
+		if quick {
+			clusters = [][]scanner.FileEntry{group}
+		} else {
+			c, err := clusterByContent(group)
+			if err != nil {
+				rep.Errorf("%v", err)
+				continue
+			}
+			clusters = c
 		}
 		for _, cl := range clusters {
 			if len(cl) < 2 {
@@ -102,8 +114,9 @@ func Find(files []scanner.FileEntry, jobs int, rep ui.Reporter) (*model.Output, 
 	return out, nil
 }
 
-// hashCandidates hashes with jobs workers and reports progress.
-func hashCandidates(candidates []scanner.FileEntry, jobs int, rep ui.Reporter) []hashed {
+// hashCandidates hashes with jobs workers and reports progress. In quick mode
+// it sample-hashes the file ends instead of the whole file.
+func hashCandidates(candidates []scanner.FileEntry, jobs int, algo hasher.Algorithm, quick bool, rep ui.Reporter) []hashed {
 	if jobs < 1 {
 		jobs = 1
 	}
@@ -119,7 +132,15 @@ func hashCandidates(candidates []scanner.FileEntry, jobs int, rep ui.Reporter) [
 		go func() {
 			defer wg.Done()
 			for e := range in {
-				h, err := hasher.HashFile(e.AbsPath)
+				var (
+					h   string
+					err error
+				)
+				if quick {
+					h, err = hasher.HashSample(e.AbsPath, algo, quickSampleBytes)
+				} else {
+					h, err = hasher.HashFile(e.AbsPath, algo)
+				}
 				if err != nil {
 					rep.Errorf("%s: %v", e.AbsPath, err)
 					continue

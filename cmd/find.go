@@ -30,6 +30,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/mkloubert/go-duplicate-finder/internal/dedup"
+	"github.com/mkloubert/go-duplicate-finder/internal/hasher"
 	"github.com/mkloubert/go-duplicate-finder/internal/highlight"
 	"github.com/mkloubert/go-duplicate-finder/internal/htmlreport"
 	"github.com/mkloubert/go-duplicate-finder/internal/model"
@@ -56,6 +57,9 @@ func newFindCmd() *cobra.Command {
 		format           string
 		minCount         int
 		failIfDuplicates bool
+		hashName         string
+		followSymlinks   bool
+		quick            bool
 	)
 
 	cmd := &cobra.Command{
@@ -89,6 +93,15 @@ func newFindCmd() *cobra.Command {
 				}
 			}
 
+			algo, err := hasher.ParseAlgorithm(hashName)
+			if err != nil {
+				return err
+			}
+
+			if quick {
+				fmt.Fprintln(os.Stderr, "warning: --quick uses approximate matching (sampled hashing, no byte comparison)")
+			}
+
 			baseDir, err := resolveBaseDir(cwd)
 			if err != nil {
 				return err
@@ -96,13 +109,13 @@ func newFindCmd() *cobra.Command {
 
 			rep := ui.New(noTUI)
 
-			files, err := scanner.Scan(baseDir, patterns, rep)
+			files, err := scanner.Scan(baseDir, patterns, followSymlinks, rep)
 			if err != nil {
 				rep.Done()
 				return err
 			}
 
-			out, err := dedup.Find(files, jobs, rep)
+			out, err := dedup.Find(files, jobs, algo, quick, rep)
 			rep.Done()
 			if err != nil {
 				return err
@@ -170,6 +183,9 @@ func newFindCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "Output format: json (default) or html")
 	cmd.Flags().IntVar(&minCount, "min-count", 0, "Keep only groups with at least this many files (original + duplicates)")
 	cmd.Flags().BoolVar(&failIfDuplicates, "fail-if-duplicates", false, "Exit with code 2 if any duplicate group remains")
+	cmd.Flags().StringVar(&hashName, "hash", "", "Hash algorithm: blake3 (default), sha256, or xxh3")
+	cmd.Flags().BoolVar(&followSymlinks, "follow-symlinks", false, "Follow symlinks and include their targets")
+	cmd.Flags().BoolVar(&quick, "quick", false, "Approximate: sample-hash file ends, skip the byte comparison")
 	return cmd
 }
 

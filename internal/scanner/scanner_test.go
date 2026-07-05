@@ -46,7 +46,7 @@ func TestScanFiltersAndDedups(t *testing.T) {
 	mk(t, filepath.Join(dir, "empty.txt"), "") // 0 bytes ⇒ skip
 
 	// Two overlapping patterns ⇒ dedup must apply.
-	got, err := scanner.Scan(dir, []string{"**/**", "a.txt"}, ui.Noop{})
+	got, err := scanner.Scan(dir, []string{"**/**", "a.txt"}, false, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,54 @@ func TestScanFiltersAndDedups(t *testing.T) {
 }
 
 func TestScanInvalidPattern(t *testing.T) {
-	if _, err := scanner.Scan(t.TempDir(), []string{"[bad"}, ui.Noop{}); err == nil {
+	if _, err := scanner.Scan(t.TempDir(), []string{"[bad"}, false, ui.Noop{}); err == nil {
 		t.Fatal("expected error for invalid pattern")
+	}
+}
+
+func TestScanDedupesHardlinks(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.txt")
+	mk(t, a, "hello")
+	b := filepath.Join(dir, "b.txt")
+	if err := os.Link(a, b); err != nil {
+		t.Skipf("hardlinks unsupported here: %v", err)
+	}
+
+	got, err := scanner.Scan(dir, []string{"**/**"}, false, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("hardlinks should collapse to 1 entry, got %d", len(got))
+	}
+}
+
+func TestScanSymlinkPolicy(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.txt")
+	mk(t, real, "data")
+	link := filepath.Join(dir, "link.txt")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+
+	// Default: the symlink is skipped (non-regular), only the real file remains.
+	got, err := scanner.Scan(dir, []string{"**/**"}, false, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].AbsPath != real {
+		t.Fatalf("default should keep only the real file, got %v", got)
+	}
+
+	// Following: the symlink resolves to the target's inode, so it collapses with
+	// the target to a single entry.
+	got, err = scanner.Scan(dir, []string{"**/**"}, true, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("follow should collapse symlink and target to 1 entry, got %d", len(got))
 	}
 }
