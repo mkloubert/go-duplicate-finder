@@ -39,12 +39,22 @@ type FileEntry struct {
 // fileKey identifies a physical file by device and inode.
 type fileKey struct{ dev, ino uint64 }
 
-// Scan expands the glob patterns relative to baseDir and returns regular,
-// non-empty, deduplicated and sorted files by absolute path. Symlinks are
-// skipped unless followSymlinks is true. Files that share the same physical
-// storage (hardlinks, or a symlink and its target when following) collapse to a
-// single entry, so they are not reported as reclaimable duplicates.
-func Scan(baseDir string, patterns []string, followSymlinks bool, rep ui.Reporter) ([]FileEntry, error) {
+// Options configures a scan.
+type Options struct {
+	Patterns       []string // include globs (relative to the base dir)
+	FollowSymlinks bool     // resolve symlinks and include their targets
+	MinSize        int64    // skip files smaller than this (0 = no minimum)
+	MaxSize        int64    // skip files larger than this (0 = no maximum)
+	Exclude        []string // globs (relative, slash paths) whose matches are skipped
+}
+
+// Scan expands opts.Patterns relative to baseDir and returns regular, non-empty,
+// deduplicated and sorted files by absolute path. Symlinks are skipped unless
+// FollowSymlinks is set. Files that share the same physical storage (hardlinks,
+// or a symlink and its target when following) collapse to a single entry, so
+// they are not reported as reclaimable duplicates. Exclude globs and the
+// Min/MaxSize bounds remove files before hashing.
+func Scan(baseDir string, opts Options, rep ui.Reporter) ([]FileEntry, error) {
 	rep.ScanStarted()
 
 	fsys := os.DirFS(baseDir)
@@ -52,19 +62,27 @@ func Scan(baseDir string, patterns []string, followSymlinks bool, rep ui.Reporte
 	seenID := make(map[fileKey]struct{})
 	var entries []FileEntry
 
-	for _, pat := range patterns {
+	for _, pat := range opts.Patterns {
 		matches, err := doublestar.Glob(fsys, pat)
 		if err != nil {
 			return nil, fmt.Errorf("invalid pattern %q: %w", pat, err)
 		}
 		for _, rel := range matches {
+			excl, err := isExcluded(rel, opts.Exclude)
+			if err != nil {
+				return nil, err
+			}
+			if excl {
+				continue
+			}
+
 			abs := filepath.Join(baseDir, filepath.FromSlash(rel))
 			if _, ok := seen[abs]; ok {
 				continue
 			}
 
 			var info os.FileInfo
-			if followSymlinks {
+			if opts.FollowSymlinks {
 				info, err = os.Stat(abs) // resolves symlinks to their target
 			} else {
 				info, err = os.Lstat(abs) // a symlink stays non-regular and is skipped
@@ -76,7 +94,11 @@ func Scan(baseDir string, patterns []string, followSymlinks bool, rep ui.Reporte
 			if !info.Mode().IsRegular() {
 				continue
 			}
-			if info.Size() == 0 {
+			size := info.Size()
+			if size == 0 {
+				continue
+			}
+			if !sizeInRange(size, opts.MinSize, opts.MaxSize) {
 				continue
 			}
 			if dev, ino, ok := fileID(info); ok {
@@ -87,7 +109,7 @@ func Scan(baseDir string, patterns []string, followSymlinks bool, rep ui.Reporte
 				seenID[key] = struct{}{}
 			}
 			seen[abs] = struct{}{}
-			entries = append(entries, FileEntry{AbsPath: abs, Size: info.Size()})
+			entries = append(entries, FileEntry{AbsPath: abs, Size: size})
 			rep.FileFound()
 		}
 	}
@@ -96,4 +118,29 @@ func Scan(baseDir string, patterns []string, followSymlinks bool, rep ui.Reporte
 		return entries[i].AbsPath < entries[j].AbsPath
 	})
 	return entries, nil
+}
+
+// sizeInRange reports whether size is within [min, max]; a bound of 0 disables it.
+func sizeInRange(size, min, max int64) bool {
+	if min > 0 && size < min {
+		return false
+	}
+	if max > 0 && size > max {
+		return false
+	}
+	return true
+}
+
+// isExcluded reports whether the relative path matches any exclude glob.
+func isExcluded(rel string, patterns []string) (bool, error) {
+	for _, p := range patterns {
+		ok, err := doublestar.Match(p, rel)
+		if err != nil {
+			return false, fmt.Errorf("invalid exclude pattern %q: %w", p, err)
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }

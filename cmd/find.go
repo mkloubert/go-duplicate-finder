@@ -60,6 +60,9 @@ func newFindCmd() *cobra.Command {
 		hashName         string
 		followSymlinks   bool
 		quick            bool
+		minSizeStr       string
+		maxSizeStr       string
+		exclude          []string
 	)
 
 	cmd := &cobra.Command{
@@ -93,6 +96,20 @@ func newFindCmd() *cobra.Command {
 				}
 			}
 
+			var minSize, maxSize int64
+			if minSizeStr != "" {
+				minSize, err = report.ParseSize(minSizeStr)
+				if err != nil {
+					return fmt.Errorf("invalid --min-size: %w", err)
+				}
+			}
+			if maxSizeStr != "" {
+				maxSize, err = report.ParseSize(maxSizeStr)
+				if err != nil {
+					return fmt.Errorf("invalid --max-size: %w", err)
+				}
+			}
+
 			algo, err := hasher.ParseAlgorithm(hashName)
 			if err != nil {
 				return err
@@ -109,7 +126,13 @@ func newFindCmd() *cobra.Command {
 
 			rep := ui.New(noTUI)
 
-			files, err := scanner.Scan(baseDir, patterns, followSymlinks, rep)
+			files, err := scanner.Scan(baseDir, scanner.Options{
+				Patterns:       patterns,
+				FollowSymlinks: followSymlinks,
+				MinSize:        minSize,
+				MaxSize:        maxSize,
+				Exclude:        exclude,
+			}, rep)
 			if err != nil {
 				rep.Done()
 				return err
@@ -186,6 +209,9 @@ func newFindCmd() *cobra.Command {
 	cmd.Flags().StringVar(&hashName, "hash", "", "Hash algorithm: blake3 (default), sha256, or xxh3")
 	cmd.Flags().BoolVar(&followSymlinks, "follow-symlinks", false, "Follow symlinks and include their targets")
 	cmd.Flags().BoolVar(&quick, "quick", false, "Approximate: sample-hash file ends, skip the byte comparison")
+	cmd.Flags().StringVar(&minSizeStr, "min-size", "", "Skip files smaller than this size (e.g. 1M)")
+	cmd.Flags().StringVar(&maxSizeStr, "max-size", "", "Skip files larger than this size (e.g. 1G)")
+	cmd.Flags().StringArrayVar(&exclude, "exclude", nil, "Glob of paths to skip (repeatable, e.g. '**/.git/**')")
 	return cmd
 }
 

@@ -46,7 +46,7 @@ func TestScanFiltersAndDedups(t *testing.T) {
 	mk(t, filepath.Join(dir, "empty.txt"), "") // 0 bytes ⇒ skip
 
 	// Two overlapping patterns ⇒ dedup must apply.
-	got, err := scanner.Scan(dir, []string{"**/**", "a.txt"}, false, ui.Noop{})
+	got, err := scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**", "a.txt"}}, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestScanFiltersAndDedups(t *testing.T) {
 }
 
 func TestScanInvalidPattern(t *testing.T) {
-	if _, err := scanner.Scan(t.TempDir(), []string{"[bad"}, false, ui.Noop{}); err == nil {
+	if _, err := scanner.Scan(t.TempDir(), scanner.Options{Patterns: []string{"[bad"}}, ui.Noop{}); err == nil {
 		t.Fatal("expected error for invalid pattern")
 	}
 }
@@ -88,12 +88,77 @@ func TestScanDedupesHardlinks(t *testing.T) {
 		t.Skipf("hardlinks unsupported here: %v", err)
 	}
 
-	got, err := scanner.Scan(dir, []string{"**/**"}, false, ui.Noop{})
+	got, err := scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}}, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("hardlinks should collapse to 1 entry, got %d", len(got))
+	}
+}
+
+func TestScanSizeBounds(t *testing.T) {
+	dir := t.TempDir()
+	mk(t, filepath.Join(dir, "small.txt"), "aa")                    // 2 bytes
+	mk(t, filepath.Join(dir, "mid.txt"), "aaaaaaaaaa")              // 10 bytes
+	mk(t, filepath.Join(dir, "big.txt"), string(make([]byte, 100))) // 100 bytes
+
+	names := func(es []scanner.FileEntry) []string {
+		var out []string
+		for _, e := range es {
+			out = append(out, filepath.Base(e.AbsPath))
+		}
+		return out
+	}
+
+	got, err := scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}, MinSize: 5}, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := names(got); len(n) != 2 || n[0] != "big.txt" || n[1] != "mid.txt" {
+		t.Fatalf("MinSize 5 kept %v, want [big.txt mid.txt]", n)
+	}
+
+	got, err = scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}, MaxSize: 5}, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := names(got); len(n) != 1 || n[0] != "small.txt" {
+		t.Fatalf("MaxSize 5 kept %v, want [small.txt]", n)
+	}
+
+	got, err = scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}, MinSize: 5, MaxSize: 20}, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := names(got); len(n) != 1 || n[0] != "mid.txt" {
+		t.Fatalf("MinSize 5 MaxSize 20 kept %v, want [mid.txt]", n)
+	}
+}
+
+func TestScanExclude(t *testing.T) {
+	dir := t.TempDir()
+	mk(t, filepath.Join(dir, "keep.txt"), "aaa")
+	mk(t, filepath.Join(dir, ".git", "config"), "gitdata")
+	mk(t, filepath.Join(dir, "node_modules", "x", "index.js"), "code")
+
+	got, err := scanner.Scan(dir, scanner.Options{
+		Patterns: []string{"**/**"},
+		Exclude:  []string{".git/**", "node_modules/**"},
+	}, ui.Noop{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || filepath.Base(got[0].AbsPath) != "keep.txt" {
+		t.Fatalf("exclude kept %v, want [keep.txt]", got)
+	}
+}
+
+func TestScanInvalidExclude(t *testing.T) {
+	dir := t.TempDir()
+	mk(t, filepath.Join(dir, "a.txt"), "aaa")
+	if _, err := scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}, Exclude: []string{"[bad"}}, ui.Noop{}); err == nil {
+		t.Fatal("expected error for invalid exclude pattern")
 	}
 }
 
@@ -107,7 +172,7 @@ func TestScanSymlinkPolicy(t *testing.T) {
 	}
 
 	// Default: the symlink is skipped (non-regular), only the real file remains.
-	got, err := scanner.Scan(dir, []string{"**/**"}, false, ui.Noop{})
+	got, err := scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}}, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +182,7 @@ func TestScanSymlinkPolicy(t *testing.T) {
 
 	// Following: the symlink resolves to the target's inode, so it collapses with
 	// the target to a single entry.
-	got, err = scanner.Scan(dir, []string{"**/**"}, true, ui.Noop{})
+	got, err = scanner.Scan(dir, scanner.Options{Patterns: []string{"**/**"}, FollowSymlinks: true}, ui.Noop{})
 	if err != nil {
 		t.Fatal(err)
 	}
