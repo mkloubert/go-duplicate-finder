@@ -18,31 +18,54 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-package cmd
+package summaryui
 
 import (
-	"fmt"
-	"os"
-
-	"github.com/spf13/cobra"
+	"bytes"
+	"encoding/base64"
+	"testing"
 )
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+func TestOSC52CopyWritesEscape(t *testing.T) {
+	var buf bytes.Buffer
+	c := OSC52Clipboard{W: &buf}
+	if err := c.Copy("hello"); err != nil {
+		t.Fatal(err)
 	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	return root
+	want := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte("hello")) + "\a"
+	if buf.String() != want {
+		t.Fatalf("got %q, want %q", buf.String(), want)
+	}
 }
 
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+func TestSelectClipboard(t *testing.T) {
+	var buf bytes.Buffer
+
+	c, err := SelectClipboard("", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.(OSC52Clipboard); !ok {
+		t.Errorf(`"" -> %T, want OSC52Clipboard`, c)
+	}
+
+	c, err = SelectClipboard("osc52", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.(OSC52Clipboard); !ok {
+		t.Errorf(`"osc52" -> %T, want OSC52Clipboard`, c)
+	}
+
+	c, err = SelectClipboard("SYSTEM", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.(SystemClipboard); !ok {
+		t.Errorf(`"system" -> %T, want SystemClipboard`, c)
+	}
+
+	if _, err := SelectClipboard("bogus", &buf); err == nil {
+		t.Error("expected error for unknown mode")
 	}
 }

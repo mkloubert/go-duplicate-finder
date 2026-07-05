@@ -21,28 +21,48 @@
 package cmd
 
 import (
-	"fmt"
+	"io"
 	"os"
-
-	"github.com/spf13/cobra"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+func TestSummaryStaticEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	rf := filepath.Join(dir, "report.json")
+	os.WriteFile(rf, []byte(`{"result":{"/a/first":{"hash":"h","size":100,"duplicates":["/a/second","/a/third"]}}}`), 0o644)
+
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	root := newRootCmd()
+	root.SetArgs([]string{"summary", "--no-tui", "-f", rf})
+	runErr := root.Execute()
+
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+
+	if runErr != nil {
+		t.Fatalf("execute error: %v", runErr)
 	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	return root
+	for _, want := range []string{"1 groups", "/a/first", "/a/second", "/a/third", "reclaimable"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
 }
 
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+func TestSummaryUnknownClipboardMode(t *testing.T) {
+	dir := t.TempDir()
+	rf := filepath.Join(dir, "report.json")
+	os.WriteFile(rf, []byte(`{"result":{}}`), 0o644)
+
+	root := newRootCmd()
+	root.SetArgs([]string{"summary", "--no-tui", "-f", rf, "--clipboard", "bogus"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("expected error for unknown clipboard mode")
 	}
 }

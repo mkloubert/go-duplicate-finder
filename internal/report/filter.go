@@ -18,31 +18,29 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-package cmd
+package report
 
-import (
-	"fmt"
-	"os"
+import "strings"
 
-	"github.com/spf13/cobra"
-)
-
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+// Filter returns the groups whose original path or any duplicate path contains
+// the query (case-insensitive). An empty query returns all groups.
+func (s Summary) Filter(query string) []Group {
+	if query == "" {
+		return s.Groups
 	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	return root
-}
-
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+	q := strings.ToLower(query)
+	var out []Group
+	for _, g := range s.Groups {
+		if strings.Contains(strings.ToLower(g.Original), q) {
+			out = append(out, g)
+			continue
+		}
+		for _, d := range g.Duplicates {
+			if strings.Contains(strings.ToLower(d), q) {
+				out = append(out, g)
+				break
+			}
+		}
 	}
+	return out
 }

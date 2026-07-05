@@ -18,31 +18,45 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-package cmd
+package summaryui
 
 import (
 	"fmt"
-	"os"
+	"io"
 
-	"github.com/spf13/cobra"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/mkloubert/go-duplicate-finder/internal/report"
 )
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	return root
-}
+// RenderStatic writes a one-shot summary to w. The lipgloss renderer is bound
+// to w, so color is used only when w is a color-capable terminal and NO_COLOR
+// is unset.
+func RenderStatic(w io.Writer, s report.Summary, mode report.SortMode) {
+	s.SortBy(mode)
 
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+	r := lipgloss.NewRenderer(w)
+	bold := r.NewStyle().Bold(true)
+	dim := r.NewStyle().Faint(true)
+
+	fmt.Fprintln(w, bold.Render(fmt.Sprintf(
+		"%d groups · %d files · %s total · %s reclaimable",
+		s.Totals.Groups, s.Totals.Files,
+		report.Humanize(s.Totals.TotalSize), report.Humanize(s.Totals.Reclaimable))))
+	fmt.Fprintln(w)
+
+	if len(s.Groups) == 0 {
+		fmt.Fprintln(w, "No duplicates found.")
+		return
+	}
+
+	for _, g := range s.Groups {
+		fmt.Fprintf(w, "%s  %s  %s\n",
+			bold.Render(g.Original),
+			report.Humanize(g.Size),
+			dim.Render(fmt.Sprintf("(%d dupes, %s reclaimable)",
+				len(g.Duplicates), report.Humanize(g.Reclaimable()))))
+		for _, d := range g.Duplicates {
+			fmt.Fprintf(w, "  %s %s\n", dim.Render("↳"), d)
+		}
 	}
 }

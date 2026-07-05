@@ -18,31 +18,21 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-package cmd
+package report
 
-import (
-	"fmt"
-	"os"
+import "fmt"
 
-	"github.com/spf13/cobra"
-)
-
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+// Humanize formats a byte count with 1024-based units (B, KB, MB, …).
+func Humanize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
 	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	return root
-}
-
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
 	}
+	units := []string{"KB", "MB", "GB", "TB", "PB", "EB"}
+	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }

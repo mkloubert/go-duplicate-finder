@@ -21,28 +21,41 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
-	"github.com/spf13/cobra"
+	"github.com/mkloubert/go-duplicate-finder/internal/model"
 )
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+// envReportFile names the report file when --report-file is unset.
+const envReportFile = "DUPFIND_REPORT_FILE"
+
+// resolveReportInput reads the report bytes by precedence: --report-file, then
+// DUPFIND_REPORT_FILE, then STDIN (only when it is piped, i.e. not a TTY).
+func resolveReportInput(flagFile string, stdin io.Reader, stdinIsTTY bool) ([]byte, error) {
+	if flagFile != "" {
+		return os.ReadFile(flagFile)
 	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	return root
+	if env := os.Getenv(envReportFile); env != "" {
+		return os.ReadFile(env)
+	}
+	if !stdinIsTTY {
+		return io.ReadAll(stdin)
+	}
+	return nil, fmt.Errorf("no input: pass --report-file, set %s, or pipe JSON to stdin", envReportFile)
 }
 
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+// parseReport unmarshals report bytes into a model.Output. An empty result is
+// valid; malformed JSON is an error.
+func parseReport(data []byte) (*model.Output, error) {
+	var out model.Output
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("invalid report JSON: %w", err)
 	}
+	if out.Result == nil {
+		out.Result = map[string]*model.FileResult{}
+	}
+	return &out, nil
 }
