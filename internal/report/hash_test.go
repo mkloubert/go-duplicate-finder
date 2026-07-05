@@ -18,32 +18,23 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-package cmd
+package report_test
 
 import (
-	"fmt"
-	"os"
+	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/mkloubert/go-duplicate-finder/internal/model"
+	"github.com/mkloubert/go-duplicate-finder/internal/report"
 )
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+func TestFromOutputPopulatesHash(t *testing.T) {
+	o := model.New()
+	o.Result["/a"] = &model.FileResult{Hash: "deadbeef", Size: 10, Duplicates: []string{"/b"}}
+	s := report.FromOutput(o)
+	if len(s.Groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(s.Groups))
 	}
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	root.AddCommand(newScriptCmd())
-	return root
-}
-
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+	if s.Groups[0].Hash != "deadbeef" {
+		t.Fatalf("hash = %q, want deadbeef", s.Groups[0].Hash)
 	}
 }

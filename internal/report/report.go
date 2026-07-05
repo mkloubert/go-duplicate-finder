@@ -25,6 +25,7 @@ import "github.com/mkloubert/go-duplicate-finder/internal/model"
 // Group is one set of identical files: the first occurrence and its duplicates.
 type Group struct {
 	Original   string
+	Hash       string
 	Size       int64
 	Duplicates []string
 }
@@ -62,6 +63,7 @@ func FromOutput(o *model.Output) Summary {
 		}
 		g := Group{
 			Original:   path,
+			Hash:       res.Hash,
 			Size:       res.Size,
 			Duplicates: append([]string(nil), res.Duplicates...),
 		}
