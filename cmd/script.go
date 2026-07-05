@@ -21,10 +21,12 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"strings"
 
 	"github.com/mattn/go-isatty"
+	"github.com/mkloubert/go-duplicate-finder/internal/highlight"
 	"github.com/mkloubert/go-duplicate-finder/internal/report"
 	"github.com/mkloubert/go-duplicate-finder/internal/script"
 	"github.com/spf13/cobra"
@@ -71,12 +73,26 @@ func newScriptCmd() *cobra.Command {
 				return err
 			}
 
-			script.Generate(os.Stdout, report.FromOutput(out), sh)
-			return nil
+			enabled, theme, err := resolveHighlight(cmd)
+			if err != nil {
+				return err
+			}
+
+			var buf bytes.Buffer
+			script.Generate(&buf, report.FromOutput(out), sh)
+			return highlight.Write(os.Stdout, buf.String(), shellLang(sh), enabled, theme)
 		},
 	}
 
 	cmd.Flags().StringVarP(&reportFile, "report-file", "f", "", "Read the report from this file (env: DUPFIND_REPORT_FILE)")
 	cmd.Flags().StringVar(&shellName, "shell", "", "Target shell: auto (default), bash, zsh, or powershell (env: DUPFIND_SHELL)")
 	return cmd
+}
+
+// shellLang maps a shell to its Chroma lexer name.
+func shellLang(sh script.Shell) string {
+	if sh == script.PowerShell {
+		return "powershell"
+	}
+	return "bash"
 }

@@ -21,31 +21,38 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
+	"github.com/mattn/go-isatty"
+	"github.com/mkloubert/go-duplicate-finder/internal/highlight"
 	"github.com/spf13/cobra"
 )
 
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+// envTheme names the syntax-highlight theme when --theme is unset.
+const envTheme = "DUPFIND_THEME"
+
+// resolveTheme picks the theme: --theme flag, then DUPFIND_THEME, then monokai.
+func resolveTheme(flagTheme, envValue string) string {
+	if flagTheme != "" {
+		return flagTheme
 	}
-	root.PersistentFlags().String("color", "auto", "Colorize output: auto, always, or never")
-	root.PersistentFlags().String("theme", "", "Syntax highlight theme (env: DUPFIND_THEME; default monokai)")
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	root.AddCommand(newScriptCmd())
-	return root
+	if envValue != "" {
+		return envValue
+	}
+	return "monokai"
 }
 
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+// resolveHighlight reads the persistent --color/--theme flags plus environment
+// and the STDOUT TTY state to decide whether to colorize and which theme to use.
+func resolveHighlight(cmd *cobra.Command) (bool, string, error) {
+	colorStr, _ := cmd.Flags().GetString("color")
+	mode, err := highlight.ParseColorMode(colorStr)
+	if err != nil {
+		return false, "", err
 	}
+	_, noColor := os.LookupEnv("NO_COLOR")
+	enabled := highlight.Enabled(mode, isatty.IsTerminal(os.Stdout.Fd()), noColor)
+
+	flagTheme, _ := cmd.Flags().GetString("theme")
+	return enabled, resolveTheme(flagTheme, os.Getenv(envTheme)), nil
 }

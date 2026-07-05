@@ -27,3 +27,9 @@ import "encoding/json"
 func (o *Output) Marshal() ([]byte, error) {
 	return json.MarshalIndent(o, "", "  ")
 }
+
+// MarshalCompact serializes the output as a single compact JSON line (no
+// indentation). Go marshals map keys in sorted order, so it stays deterministic.
+func (o *Output) MarshalCompact() ([]byte, error) {
+	return json.Marshal(o)
+}

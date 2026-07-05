@@ -25,7 +25,9 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/mattn/go-isatty"
 	"github.com/mkloubert/go-duplicate-finder/internal/dedup"
+	"github.com/mkloubert/go-duplicate-finder/internal/highlight"
 	"github.com/mkloubert/go-duplicate-finder/internal/scanner"
 	"github.com/mkloubert/go-duplicate-finder/internal/ui"
 	"github.com/spf13/cobra"
@@ -33,10 +35,12 @@ import (
 
 func newFindCmd() *cobra.Command {
 	var (
-		output string
-		jobs   int
-		noTUI  bool
-		cwd    string
+		output  string
+		jobs    int
+		noTUI   bool
+		cwd     string
+		compact bool
+		pretty  bool
 	)
 
 	cmd := &cobra.Command{
@@ -46,6 +50,11 @@ func newFindCmd() *cobra.Command {
 			patterns := args
 			if len(patterns) == 0 {
 				patterns = []string{"**/**"}
+			}
+
+			enabled, theme, err := resolveHighlight(cmd)
+			if err != nil {
+				return err
 			}
 
 			baseDir, err := resolveBaseDir(cwd)
@@ -67,15 +76,28 @@ func newFindCmd() *cobra.Command {
 				return err
 			}
 
-			data, err := out.Marshal()
+			indent := chooseIndent(compact, pretty, isatty.IsTerminal(os.Stdout.Fd()))
+			var data []byte
+			if indent {
+				data, err = out.Marshal()
+			} else {
+				data, err = out.MarshalCompact()
+			}
 			if err != nil {
 				return err
 			}
 
-			fmt.Fprintln(os.Stdout, string(data))
+			if err := highlight.Write(os.Stdout, string(data), "json", enabled, theme); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stdout)
 
 			if output != "" {
-				if err := os.WriteFile(output, append(data, '\n'), 0o644); err != nil {
+				fileData, ferr := out.MarshalCompact()
+				if ferr != nil {
+					return ferr
+				}
+				if err := os.WriteFile(output, append(fileData, '\n'), 0o644); err != nil {
 					return fmt.Errorf("cannot write output file %q: %w", output, err)
 				}
 			}
@@ -87,5 +109,20 @@ func newFindCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&jobs, "jobs", "j", runtime.NumCPU(), "Number of parallel hash workers")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Disable the rich UI, plain logs only")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "Override the working directory (env: DUPFIND_CWD)")
+	cmd.Flags().BoolVar(&compact, "compact", false, "Force compact single-line JSON")
+	cmd.Flags().BoolVar(&pretty, "pretty", false, "Force indented JSON")
+	cmd.MarkFlagsMutuallyExclusive("compact", "pretty")
 	return cmd
+}
+
+// chooseIndent decides whether to indent the JSON. --compact forces compact,
+// --pretty forces indented; otherwise it follows whether STDOUT is a terminal.
+func chooseIndent(compact, pretty, isTTY bool) bool {
+	if compact {
+		return false
+	}
+	if pretty {
+		return true
+	}
+	return isTTY
 }

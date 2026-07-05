@@ -21,6 +21,7 @@
 package model_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mkloubert/go-duplicate-finder/internal/model"
@@ -66,5 +67,27 @@ func TestEmptyOutputMarshal(t *testing.T) {
 }`
 	if string(got) != want {
 		t.Fatalf("unexpected empty JSON:\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestOutputMarshalCompact(t *testing.T) {
+	o := model.New()
+	o.Result["/a/first"] = &model.FileResult{
+		Hash:       "abc123",
+		Size:       42,
+		Duplicates: []string{"/a/second"},
+	}
+
+	got, err := o.MarshalCompact()
+	if err != nil {
+		t.Fatalf("MarshalCompact returned error: %v", err)
+	}
+
+	want := `{"result":{"/a/first":{"hash":"abc123","size":42,"duplicates":["/a/second"]}}}`
+	if string(got) != want {
+		t.Fatalf("compact JSON:\n got: %s\nwant: %s", got, want)
+	}
+	if strings.Contains(string(got), "\n") {
+		t.Error("compact JSON must not contain newlines")
 	}
 }

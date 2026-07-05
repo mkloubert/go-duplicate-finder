@@ -20,32 +20,16 @@
 
 package cmd
 
-import (
-	"fmt"
-	"os"
+import "testing"
 
-	"github.com/spf13/cobra"
-)
-
-func newRootCmd() *cobra.Command {
-	root := &cobra.Command{
-		Use:           "dupfind",
-		Short:         "dupfind finds duplicate files",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+func TestResolveTheme(t *testing.T) {
+	if got := resolveTheme("dracula", "github"); got != "dracula" {
+		t.Errorf("flag should win: %q", got)
 	}
-	root.PersistentFlags().String("color", "auto", "Colorize output: auto, always, or never")
-	root.PersistentFlags().String("theme", "", "Syntax highlight theme (env: DUPFIND_THEME; default monokai)")
-	root.AddCommand(newFindCmd())
-	root.AddCommand(newSummaryCmd())
-	root.AddCommand(newScriptCmd())
-	return root
-}
-
-// Execute is the entry point of the CLI.
-func Execute() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+	if got := resolveTheme("", "github"); got != "github" {
+		t.Errorf("env should be used: %q", got)
+	}
+	if got := resolveTheme("", ""); got != "monokai" {
+		t.Errorf("default should be monokai: %q", got)
 	}
 }
