@@ -43,6 +43,9 @@ func newSummaryCmd() *cobra.Command {
 		Use:   "summary",
 		Short: "Show a duplicate report in a rich terminal UI",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			si, _ := cmd.Flags().GetBool("si")
+			report.SetSIUnits(si)
+
 			stdinIsTTY := isatty.IsTerminal(os.Stdin.Fd())
 
 			data, err := resolveReportInput(reportFile, os.Stdin, stdinIsTTY)

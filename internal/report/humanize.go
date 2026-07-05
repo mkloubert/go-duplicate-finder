@@ -22,17 +22,34 @@ package report
 
 import "fmt"
 
-// Humanize formats a byte count with 1024-based units (B, KB, MB, …).
-func Humanize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
+// siUnits is the package-wide default for Humanize. It is set once at startup
+// via SetSIUnits and read single-threaded, so it needs no synchronization.
+var siUnits bool
+
+// SetSIUnits selects 1000-based (SI) units for Humanize. Call once during
+// startup; do not modify concurrently.
+func SetSIUnits(v bool) { siUnits = v }
+
+// Humanize formats a byte count using the package unit setting (1024-based by
+// default; 1000-based when SetSIUnits(true) was called).
+func Humanize(bytes int64) string { return HumanizeBytes(bytes, siUnits) }
+
+// HumanizeBytes formats a byte count. With si=false it uses 1024-based units
+// (KB, MB, …); with si=true it uses 1000-based SI units (kB, MB, …).
+func HumanizeBytes(bytes int64, si bool) string {
+	base := int64(1024)
+	units := []string{"KB", "MB", "GB", "TB", "PB", "EB"}
+	if si {
+		base = 1000
+		units = []string{"kB", "MB", "GB", "TB", "PB", "EB"}
+	}
+	if bytes < base {
 		return fmt.Sprintf("%d B", bytes)
 	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
+	div, exp := base, 0
+	for n := bytes / base; n >= base; n /= base {
+		div *= base
 		exp++
 	}
-	units := []string{"KB", "MB", "GB", "TB", "PB", "EB"}
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }

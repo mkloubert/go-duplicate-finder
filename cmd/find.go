@@ -24,10 +24,13 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 
 	"github.com/mattn/go-isatty"
 	"github.com/mkloubert/go-duplicate-finder/internal/dedup"
 	"github.com/mkloubert/go-duplicate-finder/internal/highlight"
+	"github.com/mkloubert/go-duplicate-finder/internal/model"
+	"github.com/mkloubert/go-duplicate-finder/internal/report"
 	"github.com/mkloubert/go-duplicate-finder/internal/scanner"
 	"github.com/mkloubert/go-duplicate-finder/internal/ui"
 	"github.com/spf13/cobra"
@@ -35,12 +38,14 @@ import (
 
 func newFindCmd() *cobra.Command {
 	var (
-		output  string
-		jobs    int
-		noTUI   bool
-		cwd     string
-		compact bool
-		pretty  bool
+		output         string
+		jobs           int
+		noTUI          bool
+		cwd            string
+		compact        bool
+		pretty         bool
+		top            int
+		minReclaimable string
 	)
 
 	cmd := &cobra.Command{
@@ -55,6 +60,14 @@ func newFindCmd() *cobra.Command {
 			enabled, theme, err := resolveHighlight(cmd)
 			if err != nil {
 				return err
+			}
+
+			var minRecl int64
+			if minReclaimable != "" {
+				minRecl, err = report.ParseSize(minReclaimable)
+				if err != nil {
+					return fmt.Errorf("invalid --min-reclaimable: %w", err)
+				}
 			}
 
 			baseDir, err := resolveBaseDir(cwd)
@@ -75,6 +88,8 @@ func newFindCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			out = filterGroups(out, top, minRecl)
 
 			indent := chooseIndent(compact, pretty, isatty.IsTerminal(os.Stdout.Fd()))
 			var data []byte
@@ -112,7 +127,49 @@ func newFindCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&compact, "compact", false, "Force compact single-line JSON")
 	cmd.Flags().BoolVar(&pretty, "pretty", false, "Force indented JSON")
 	cmd.MarkFlagsMutuallyExclusive("compact", "pretty")
+	cmd.Flags().IntVar(&top, "top", 0, "Keep only the N groups with the most reclaimable space (0 = all)")
+	cmd.Flags().StringVar(&minReclaimable, "min-reclaimable", "", "Keep only groups reclaiming at least this size (e.g. 10M)")
 	return cmd
+}
+
+// filterGroups returns a copy of out keeping only groups whose reclaimable space
+// (size × number of duplicates) is at least minReclaimable, then only the top
+// groups by reclaimable space (top <= 0 means no limit). Ties break by path so
+// the selection is deterministic.
+func filterGroups(out *model.Output, top int, minReclaimable int64) *model.Output {
+	type entry struct {
+		key  string
+		res  *model.FileResult
+		recl int64
+	}
+
+	var entries []entry
+	for key, res := range out.Result {
+		if res == nil {
+			continue
+		}
+		recl := res.Size * int64(len(res.Duplicates))
+		if recl >= minReclaimable {
+			entries = append(entries, entry{key: key, res: res, recl: recl})
+		}
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].recl != entries[j].recl {
+			return entries[i].recl > entries[j].recl
+		}
+		return entries[i].key < entries[j].key
+	})
+
+	if top > 0 && len(entries) > top {
+		entries = entries[:top]
+	}
+
+	result := model.New()
+	for _, e := range entries {
+		result.Result[e.key] = e.res
+	}
+	return result
 }
 
 // chooseIndent decides whether to indent the JSON. --compact forces compact,
