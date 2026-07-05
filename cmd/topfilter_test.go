@@ -36,23 +36,28 @@ func TestFilterGroups(t *testing.T) {
 	out.Result["/b"] = &model.FileResult{Size: 500, Duplicates: []string{"/b2"}}        // recl 500
 	out.Result["/c"] = &model.FileResult{Size: 10, Duplicates: []string{"/c2"}}         // recl 10
 
-	if got := filterGroups(out, 0, 0); len(got.Result) != 3 {
+	if got := filterGroups(out, 0, 0, 0); len(got.Result) != 3 {
 		t.Errorf("no filter kept %d groups, want 3", len(got.Result))
 	}
 
-	got := filterGroups(out, 0, 100) // min reclaimable drops /c (recl 10)
+	got := filterGroups(out, 0, 100, 0) // min reclaimable drops /c (recl 10)
 	if len(got.Result) != 2 || got.Result["/c"] != nil {
 		t.Errorf("min-reclaimable filter kept %v", mapKeys(got))
 	}
 
-	got = filterGroups(out, 1, 0) // top 1 -> only /b (largest reclaimable)
+	got = filterGroups(out, 1, 0, 0) // top 1 -> only /b (largest reclaimable)
 	if len(got.Result) != 1 || got.Result["/b"] == nil {
 		t.Errorf("top 1 kept %v, want [/b]", mapKeys(got))
 	}
 
-	got = filterGroups(out, 2, 0) // top 2 -> /b and /a
+	got = filterGroups(out, 2, 0, 0) // top 2 -> /b and /a
 	if len(got.Result) != 2 || got.Result["/b"] == nil || got.Result["/a"] == nil {
 		t.Errorf("top 2 kept %v, want [/b /a]", mapKeys(got))
+	}
+
+	got = filterGroups(out, 0, 0, 3) // min-count 3 -> only /a (3 files)
+	if len(got.Result) != 1 || got.Result["/a"] == nil {
+		t.Errorf("min-count 3 kept %v, want [/a]", mapKeys(got))
 	}
 }
 

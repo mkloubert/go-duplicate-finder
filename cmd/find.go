@@ -21,6 +21,8 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -29,6 +31,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/mkloubert/go-duplicate-finder/internal/dedup"
 	"github.com/mkloubert/go-duplicate-finder/internal/highlight"
+	"github.com/mkloubert/go-duplicate-finder/internal/htmlreport"
 	"github.com/mkloubert/go-duplicate-finder/internal/model"
 	"github.com/mkloubert/go-duplicate-finder/internal/report"
 	"github.com/mkloubert/go-duplicate-finder/internal/scanner"
@@ -36,16 +39,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// errDuplicatesFound is returned by find when --fail-if-duplicates is set and at
+// least one duplicate group remains. Execute maps it to exit code 2.
+var errDuplicatesFound = errors.New("duplicates found")
+
 func newFindCmd() *cobra.Command {
 	var (
-		output         string
-		jobs           int
-		noTUI          bool
-		cwd            string
-		compact        bool
-		pretty         bool
-		top            int
-		minReclaimable string
+		output           string
+		jobs             int
+		noTUI            bool
+		cwd              string
+		compact          bool
+		pretty           bool
+		top              int
+		minReclaimable   string
+		format           string
+		minCount         int
+		failIfDuplicates bool
 	)
 
 	cmd := &cobra.Command{
@@ -55,6 +65,15 @@ func newFindCmd() *cobra.Command {
 			patterns := args
 			if len(patterns) == 0 {
 				patterns = []string{"**/**"}
+			}
+
+			si, _ := cmd.Flags().GetBool("si")
+			report.SetSIUnits(si)
+
+			switch format {
+			case "", "json", "html":
+			default:
+				return fmt.Errorf("invalid --format %q (use json or html)", format)
 			}
 
 			enabled, theme, err := resolveHighlight(cmd)
@@ -89,32 +108,51 @@ func newFindCmd() *cobra.Command {
 				return err
 			}
 
-			out = filterGroups(out, top, minRecl)
+			out = filterGroups(out, top, minRecl, minCount)
 
-			indent := chooseIndent(compact, pretty, isatty.IsTerminal(os.Stdout.Fd()))
-			var data []byte
-			if indent {
-				data, err = out.Marshal()
+			if format == "html" {
+				var buf bytes.Buffer
+				if err := htmlreport.Write(&buf, report.FromOutput(out)); err != nil {
+					return err
+				}
+				if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+					return err
+				}
+				if output != "" {
+					if err := os.WriteFile(output, buf.Bytes(), 0o644); err != nil {
+						return fmt.Errorf("cannot write output file %q: %w", output, err)
+					}
+				}
 			} else {
-				data, err = out.MarshalCompact()
-			}
-			if err != nil {
-				return err
+				indent := chooseIndent(compact, pretty, isatty.IsTerminal(os.Stdout.Fd()))
+				var data []byte
+				if indent {
+					data, err = out.Marshal()
+				} else {
+					data, err = out.MarshalCompact()
+				}
+				if err != nil {
+					return err
+				}
+
+				if err := highlight.Write(os.Stdout, string(data), "json", enabled, theme); err != nil {
+					return err
+				}
+				fmt.Fprintln(os.Stdout)
+
+				if output != "" {
+					fileData, ferr := out.MarshalCompact()
+					if ferr != nil {
+						return ferr
+					}
+					if err := os.WriteFile(output, append(fileData, '\n'), 0o644); err != nil {
+						return fmt.Errorf("cannot write output file %q: %w", output, err)
+					}
+				}
 			}
 
-			if err := highlight.Write(os.Stdout, string(data), "json", enabled, theme); err != nil {
-				return err
-			}
-			fmt.Fprintln(os.Stdout)
-
-			if output != "" {
-				fileData, ferr := out.MarshalCompact()
-				if ferr != nil {
-					return ferr
-				}
-				if err := os.WriteFile(output, append(fileData, '\n'), 0o644); err != nil {
-					return fmt.Errorf("cannot write output file %q: %w", output, err)
-				}
+			if failIfDuplicates && len(out.Result) > 0 {
+				return errDuplicatesFound
 			}
 			return nil
 		},
@@ -129,14 +167,18 @@ func newFindCmd() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("compact", "pretty")
 	cmd.Flags().IntVar(&top, "top", 0, "Keep only the N groups with the most reclaimable space (0 = all)")
 	cmd.Flags().StringVar(&minReclaimable, "min-reclaimable", "", "Keep only groups reclaiming at least this size (e.g. 10M)")
+	cmd.Flags().StringVar(&format, "format", "", "Output format: json (default) or html")
+	cmd.Flags().IntVar(&minCount, "min-count", 0, "Keep only groups with at least this many files (original + duplicates)")
+	cmd.Flags().BoolVar(&failIfDuplicates, "fail-if-duplicates", false, "Exit with code 2 if any duplicate group remains")
 	return cmd
 }
 
 // filterGroups returns a copy of out keeping only groups whose reclaimable space
-// (size × number of duplicates) is at least minReclaimable, then only the top
-// groups by reclaimable space (top <= 0 means no limit). Ties break by path so
-// the selection is deterministic.
-func filterGroups(out *model.Output, top int, minReclaimable int64) *model.Output {
+// (size × number of duplicates) is at least minReclaimable and whose file count
+// (original + duplicates) is at least minCount, then only the top groups by
+// reclaimable space (top <= 0 means no limit). Ties break by path so the
+// selection is deterministic.
+func filterGroups(out *model.Output, top int, minReclaimable int64, minCount int) *model.Output {
 	type entry struct {
 		key  string
 		res  *model.FileResult
@@ -149,7 +191,8 @@ func filterGroups(out *model.Output, top int, minReclaimable int64) *model.Outpu
 			continue
 		}
 		recl := res.Size * int64(len(res.Duplicates))
-		if recl >= minReclaimable {
+		fileCount := 1 + len(res.Duplicates)
+		if recl >= minReclaimable && fileCount >= minCount {
 			entries = append(entries, entry{key: key, res: res, recl: recl})
 		}
 	}

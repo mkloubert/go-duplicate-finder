@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -46,6 +47,10 @@ func newRootCmd() *cobra.Command {
 // Execute is the entry point of the CLI.
 func Execute() {
 	if err := newRootCmd().Execute(); err != nil {
+		// --fail-if-duplicates is a result signal, not an error: exit 2 quietly.
+		if errors.Is(err, errDuplicatesFound) {
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
