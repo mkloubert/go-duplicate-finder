@@ -57,7 +57,10 @@ func newScriptCmd() *cobra.Command {
 		Use:   "script",
 		Short: "Generate a shell script that deletes the duplicates",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			si, _ := cmd.Flags().GetBool("si")
+			si, err := resolveSI(cmd)
+			if err != nil {
+				return err
+			}
 			report.SetSIUnits(si)
 
 			stdinIsTTY := isatty.IsTerminal(os.Stdin.Fd())

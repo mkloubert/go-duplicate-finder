@@ -74,7 +74,23 @@ func newFindCmd() *cobra.Command {
 				patterns = []string{"**/**"}
 			}
 
-			si, _ := cmd.Flags().GetBool("si")
+			if err := applyBoolEnv(cmd, "no-tui", envNoTUI, &noTUI); err != nil {
+				return err
+			}
+			if err := applyBoolEnv(cmd, "follow-symlinks", envFollowSymlinks, &followSymlinks); err != nil {
+				return err
+			}
+			if err := applyIntEnv(cmd, "jobs", envJobs, &jobs); err != nil {
+				return err
+			}
+			applyStringEnv(cmd, "hash", envHash, &hashName)
+			applyStringEnv(cmd, "format", envFormat, &format)
+			applyStringSliceEnv(cmd, "exclude", envExclude, &exclude)
+
+			si, err := resolveSI(cmd)
+			if err != nil {
+				return err
+			}
 			report.SetSIUnits(si)
 
 			switch format {
@@ -195,23 +211,23 @@ func newFindCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Also write the JSON to this file")
-	cmd.Flags().IntVarP(&jobs, "jobs", "j", runtime.NumCPU(), "Number of parallel hash workers")
-	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Disable the rich UI, plain logs only")
+	cmd.Flags().IntVarP(&jobs, "jobs", "j", runtime.NumCPU(), "Number of parallel hash workers (env: DUPFIND_JOBS)")
+	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Disable the rich UI, plain logs only (env: DUPFIND_NO_TUI)")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "Override the working directory (env: DUPFIND_CWD)")
 	cmd.Flags().BoolVar(&compact, "compact", false, "Force compact single-line JSON")
 	cmd.Flags().BoolVar(&pretty, "pretty", false, "Force indented JSON")
 	cmd.MarkFlagsMutuallyExclusive("compact", "pretty")
 	cmd.Flags().IntVar(&top, "top", 0, "Keep only the N groups with the most reclaimable space (0 = all)")
 	cmd.Flags().StringVar(&minReclaimable, "min-reclaimable", "", "Keep only groups reclaiming at least this size (e.g. 10M)")
-	cmd.Flags().StringVar(&format, "format", "", "Output format: json (default) or html")
+	cmd.Flags().StringVar(&format, "format", "", "Output format: json (default) or html (env: DUPFIND_FORMAT)")
 	cmd.Flags().IntVar(&minCount, "min-count", 0, "Keep only groups with at least this many files (original + duplicates)")
 	cmd.Flags().BoolVar(&failIfDuplicates, "fail-if-duplicates", false, "Exit with code 2 if any duplicate group remains")
-	cmd.Flags().StringVar(&hashName, "hash", "", "Hash algorithm: blake3 (default), sha256, or xxh3")
-	cmd.Flags().BoolVar(&followSymlinks, "follow-symlinks", false, "Follow symlinks and include their targets")
+	cmd.Flags().StringVar(&hashName, "hash", "", "Hash algorithm: blake3 (default), sha256, or xxh3 (env: DUPFIND_HASH)")
+	cmd.Flags().BoolVar(&followSymlinks, "follow-symlinks", false, "Follow symlinks and include their targets (env: DUPFIND_FOLLOW_SYMLINKS)")
 	cmd.Flags().BoolVar(&quick, "quick", false, "Approximate: sample-hash file ends, skip the byte comparison")
 	cmd.Flags().StringVar(&minSizeStr, "min-size", "", "Skip files smaller than this size (e.g. 1M)")
 	cmd.Flags().StringVar(&maxSizeStr, "max-size", "", "Skip files larger than this size (e.g. 1G)")
-	cmd.Flags().StringArrayVar(&exclude, "exclude", nil, "Glob of paths to skip (repeatable, e.g. '**/.git/**')")
+	cmd.Flags().StringArrayVar(&exclude, "exclude", nil, "Glob of paths to skip (repeatable, e.g. '**/.git/**') (env: DUPFIND_EXCLUDE, comma-separated)")
 	return cmd
 }
 

@@ -35,9 +35,9 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("color", "auto", "Colorize output: auto, always, or never")
+	root.PersistentFlags().String("color", "auto", "Colorize output: auto, always, or never (env: DUPFIND_COLOR)")
 	root.PersistentFlags().String("theme", "", "Syntax highlight theme (env: DUPFIND_THEME; default monokai)")
-	root.PersistentFlags().Bool("si", false, "Use 1000-based SI size units (kB, MB) instead of 1024-based")
+	root.PersistentFlags().Bool("si", false, "Use 1000-based SI size units (kB, MB) instead of 1024-based (env: DUPFIND_SI)")
 	root.AddCommand(newFindCmd())
 	root.AddCommand(newSummaryCmd())
 	root.AddCommand(newScriptCmd())

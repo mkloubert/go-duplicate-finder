@@ -46,6 +46,7 @@ func resolveTheme(flagTheme, envValue string) string {
 // and the STDOUT TTY state to decide whether to colorize and which theme to use.
 func resolveHighlight(cmd *cobra.Command) (bool, string, error) {
 	colorStr, _ := cmd.Flags().GetString("color")
+	applyStringEnv(cmd, "color", envColor, &colorStr)
 	mode, err := highlight.ParseColorMode(colorStr)
 	if err != nil {
 		return false, "", err

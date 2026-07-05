@@ -43,7 +43,13 @@ func newSummaryCmd() *cobra.Command {
 		Use:   "summary",
 		Short: "Show a duplicate report in a rich terminal UI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			si, _ := cmd.Flags().GetBool("si")
+			if err := applyBoolEnv(cmd, "no-tui", envNoTUI, &noTUI); err != nil {
+				return err
+			}
+			si, err := resolveSI(cmd)
+			if err != nil {
+				return err
+			}
 			report.SetSIUnits(si)
 
 			stdinIsTTY := isatty.IsTerminal(os.Stdin.Fd())
@@ -91,7 +97,7 @@ func newSummaryCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&reportFile, "report-file", "f", "", "Read the report from this file (env: DUPFIND_REPORT_FILE)")
-	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Force the static renderer")
+	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Force the static renderer (env: DUPFIND_NO_TUI)")
 	cmd.Flags().StringVar(&clipMode, "clipboard", "", "Clipboard mode: osc52 (default) or system (env: DUPFIND_CLIPBOARD)")
 	return cmd
 }
